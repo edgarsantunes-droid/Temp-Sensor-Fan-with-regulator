@@ -14,9 +14,7 @@ Material principal
 1x Conversor 12V → 5V
 1x Placa de 4 botões
 
-Funções do sistema
-
-O sistema vai fazer isto:
+Funções do sistema:
 
 ler temperatura do sensor
 
