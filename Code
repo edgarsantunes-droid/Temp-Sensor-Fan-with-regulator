@@ -1,0 +1,310 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <EEPROM.h>
+#include <math.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// PINOS
+const int sensorPin = A0;
+const int relePin   = 8;
+
+const int btnMenu = 2;
+const int btnUp   = 3;
+const int btnDown = 4;
+const int btnSave = 5;
+
+// NTC
+const float SERIES_RESISTOR     = 51000.0;
+const float NOMINAL_RESISTANCE  = 50000.0;
+const float NOMINAL_TEMPERATURE = 25.0;
+const float BETA_COEFFICIENT    = 3950.0;
+
+// CONFIGURÁVEL
+float tempLigar    = 92.0;
+float tempDesligar = 87.0;
+float offsetTemp   = 0.0;
+
+// EEPROM
+const int addrTempLigar    = 0;
+const int addrTempDesligar = 10;
+const int addrOffset       = 20;
+
+// ESTADO
+bool ventoinhaLigada = false;
+int menuState = 0;
+
+unsigned long lastButtonTime = 0;
+const unsigned long debounceDelay = 200;
+
+// EEPROM
+void saveSettings() {
+  EEPROM.put(addrTempLigar, tempLigar);
+  EEPROM.put(addrTempDesligar, tempDesligar);
+  EEPROM.put(addrOffset, offsetTemp);
+}
+
+void loadSettings() {
+  EEPROM.get(addrTempLigar, tempLigar);
+  EEPROM.get(addrTempDesligar, tempDesligar);
+  EEPROM.get(addrOffset, offsetTemp);
+
+  if (isnan(tempLigar) || tempLigar < 70 || tempLigar > 120) tempLigar = 92.0;
+  if (isnan(tempDesligar) || tempDesligar < 60 || tempDesligar > 115) tempDesligar = 87.0;
+  if (isnan(offsetTemp) || offsetTemp < -20 || offsetTemp > 20) offsetTemp = 0.0;
+}
+
+// BOTÕES
+bool buttonPressed(int pin) {
+  if (digitalRead(pin) == LOW && (millis() - lastButtonTime > debounceDelay)) {
+    lastButtonTime = millis();
+    return true;
+  }
+  return false;
+}
+
+// TEMPERATURA
+float calcularTempC(int adc) {
+
+  if (adc <= 0 || adc >= 1023) return NAN;
+
+  float resistenciaNTC = SERIES_RESISTOR / ((1023.0 / adc) - 1.0);
+
+  float steinhart;
+
+  steinhart = resistenciaNTC / NOMINAL_RESISTANCE;
+  steinhart = log(steinhart);
+  steinhart /= BETA_COEFFICIENT;
+  steinhart += 1.0 / (NOMINAL_TEMPERATURE + 273.15);
+  steinhart = 1.0 / steinhart;
+  steinhart -= 273.15;
+
+  return steinhart + offsetTemp;
+}
+
+// LCD NORMAL
+void mostrarTelaNormal(float temperatura) {
+
+  lcd.clear();
+
+  lcd.setCursor(0,0);
+  lcd.print("Temp: ");
+  lcd.print(temperatura,1);
+  lcd.print((char)223);
+  lcd.print("C");
+
+  lcd.setCursor(0,1);
+  lcd.print("Fan: ");
+  lcd.print(ventoinhaLigada ? "ON " : "OFF");
+}
+
+// MENU
+void mostrarMenu() {
+
+  lcd.clear();
+
+  if (menuState == 1) {
+
+    lcd.setCursor(0,0);
+    lcd.print("Liga fan:");
+
+    lcd.setCursor(0,1);
+    lcd.print(tempLigar,1);
+    lcd.print((char)223);
+    lcd.print("C");
+  }
+
+  else if (menuState == 2) {
+
+    lcd.setCursor(0,0);
+    lcd.print("Desliga fan:");
+
+    lcd.setCursor(0,1);
+    lcd.print(tempDesligar,1);
+    lcd.print((char)223);
+    lcd.print("C");
+  }
+
+  else if (menuState == 3) {
+
+    lcd.setCursor(0,0);
+    lcd.print("Offset:");
+
+    lcd.setCursor(0,1);
+    lcd.print(offsetTemp,1);
+    lcd.print((char)223);
+    lcd.print("C");
+  }
+
+  else if (menuState == 4) {
+
+    lcd.setCursor(0,0);
+    lcd.print("Guardar?");
+
+    lcd.setCursor(0,1);
+    lcd.print("Press SAVE");
+  }
+}
+
+// SETUP
+void setup() {
+
+  pinMode(relePin, OUTPUT);
+  digitalWrite(relePin, LOW);
+
+  pinMode(btnMenu, INPUT_PULLUP);
+  pinMode(btnUp, INPUT_PULLUP);
+  pinMode(btnDown, INPUT_PULLUP);
+  pinMode(btnSave, INPUT_PULLUP);
+
+  lcd.init();
+  lcd.backlight();
+
+  loadSettings();
+
+  lcd.setCursor(0,0);
+  lcd.print("Controlador Fan");
+
+  lcd.setCursor(0,1);
+  lcd.print("A iniciar...");
+  delay(1500);
+}
+
+// LOOP
+void loop() {
+
+  int leituraADC = analogRead(sensorPin);
+
+  if (leituraADC < 5 || leituraADC > 1018) {
+
+    digitalWrite(relePin, HIGH);
+    ventoinhaLigada = true;
+
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("ERRO SENSOR");
+
+    lcd.setCursor(0,1);
+    lcd.print("VENTOINHA ON");
+
+    delay(500);
+    return;
+  }
+
+  float temperatura = calcularTempC(leituraADC);
+
+  if (isnan(temperatura) || temperatura < -20 || temperatura > 150) {
+
+    digitalWrite(relePin, HIGH);
+    ventoinhaLigada = true;
+
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("TEMP INVALIDA");
+
+    lcd.setCursor(0,1);
+    lcd.print("VENTOINHA ON");
+
+    delay(500);
+    return;
+  }
+
+  if (!ventoinhaLigada && temperatura >= tempLigar) {
+
+    ventoinhaLigada = true;
+    digitalWrite(relePin, HIGH);
+  }
+
+  if (ventoinhaLigada && temperatura <= tempDesligar) {
+
+    ventoinhaLigada = false;
+    digitalWrite(relePin, LOW);
+  }
+
+  if (buttonPressed(btnMenu)) {
+
+    menuState++;
+
+    if (menuState > 4) menuState = 0;
+  }
+
+  if (menuState == 1) {
+
+    if (buttonPressed(btnUp)) {
+
+      tempLigar += 1;
+
+      if (tempLigar > 120) tempLigar = 120;
+    }
+
+    if (buttonPressed(btnDown)) {
+
+      tempLigar -= 1;
+
+      if (tempLigar < (tempDesligar + 3)) tempLigar = tempDesligar + 3;
+    }
+  }
+
+  if (menuState == 2) {
+
+    if (buttonPressed(btnUp)) {
+
+      tempDesligar += 1;
+
+      if (tempDesligar >= tempLigar - 2) tempDesligar = tempLigar - 2;
+    }
+
+    if (buttonPressed(btnDown)) {
+
+      tempDesligar -= 1;
+
+      if (tempDesligar < 60) tempDesligar = 60;
+    }
+  }
+
+  if (menuState == 3) {
+
+    if (buttonPressed(btnUp)) {
+
+      offsetTemp += 0.5;
+
+      if (offsetTemp > 20) offsetTemp = 20;
+    }
+
+    if (buttonPressed(btnDown)) {
+
+      offsetTemp -= 0.5;
+
+      if (offsetTemp < -20) offsetTemp = -20;
+    }
+  }
+
+  if (menuState == 4) {
+
+    if (buttonPressed(btnSave)) {
+
+      saveSettings();
+
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("Guardado!");
+
+      lcd.setCursor(0,1);
+      lcd.print("A voltar...");
+      delay(1200);
+
+      menuState = 0;
+    }
+  }
+
+  if (menuState == 0) {
+
+    mostrarTelaNormal(temperatura);
+  }
+  else {
+
+    mostrarMenu();
+  }
+
+  delay(150);
+}
