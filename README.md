@@ -17,10 +17,17 @@ Material principal
 Funções do sistema
 
 O sistema vai fazer isto:
+
 ler temperatura do sensor
+
 mostrar no LCD
+
 ligar a ventoinha acima da temperatura definida
+
 desligar abaixo da temperatura definida
+
 permitir ajustar valores no menu
+
 guardar os valores mesmo depois de desligar o carro
+
 ligar a ventoinha automaticamente se o sensor falhar
